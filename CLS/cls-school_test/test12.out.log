@@ -1,4 +1,4 @@
-java.io.FileNotFoundException: /Users/andrejchudy/Desktop/cls-supplementary-tests-1/test12.out (No such file or directory)
+java.io.FileNotFoundException: /Users/andrejchudy/School-VUT-FIT/CLS/cls-school_test/test12.out (No such file or directory)
 	at java.io.FileInputStream.open0(Native Method)
 	at java.io.FileInputStream.open(FileInputStream.java:195)
 	at java.io.FileInputStream.<init>(FileInputStream.java:138)

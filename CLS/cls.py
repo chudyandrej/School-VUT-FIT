@@ -1,3 +1,6 @@
+#!/usr/bin/python3
+
+
 import argparse
 import sys
 import os
@@ -69,6 +72,13 @@ class Method:
             type_s = re.search(".+[\*\&]",typeName)
             name_s = re.search("(?<=&|\*).+",typeName)
             self.arguments.append(self.argument(type_s.group(),name_s.group()))
+
+class UniqueStore(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string):
+        if getattr(namespace, self.dest, self.default) is not None:
+            parser.error(option_string + " appears several times.")
+        setattr(namespace, self.dest, values)
+
 
 ########   PARSE INPUT CODE AND STORE TO OBJECTS
 
@@ -462,7 +472,7 @@ def parseXML_XPATH(xml, xpath):
     return doc
 
 def read_input_file(input_url):
-    if input_url :
+    if input_url or input_url == '':
         if not input_url == '':
             try:
                 input_url = os.path.join(os.path.dirname(__file__), input_url)
@@ -477,7 +487,7 @@ def read_input_file(input_url):
     return sys.stdin.read()
 
 def open_file_to_write(output_url):
-    if output_url :
+    if output_url or output_url == '':
         if not output_url == '':
             try:
                 output_url = os.path.join(os.path.dirname(__file__), output_url)
@@ -493,15 +503,18 @@ def open_file_to_write(output_url):
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Program to chcek relationships in C++ for subject IPP 2016')
-    parser.add_argument("--input", help="Imput text file")
-    parser.add_argument("--output",  help="Outpur text file in format XML")
-    parser.add_argument("--pretty-xml", dest='pretty', default=4,type=int, help="Count of spaces with each plunge")
-    parser.add_argument("--details",const='', nargs='?',dest='details',action='store', help="Detail informations about class")
-    parser.add_argument("--search", help="Search specify class")
-    parser.add_argument("--conflicts", help="Detect conflicts")
-    args = parser.parse_args()
-    #### servise of file #####
+    parser.add_argument("--input", action=UniqueStore, help="Imput text file")
+    parser.add_argument("--output",  action=UniqueStore, help="Outpur text file in format XML")
+    parser.add_argument("--pretty-xml", action=UniqueStore,  dest='pretty', default=4,type=int, help="Count of spaces with each plunge")
+    parser.add_argument("--details",const='', nargs='?',dest='details',action=UniqueStore, help="Detail informations about class")
+    parser.add_argument("--search", action=UniqueStore, help="Search specify class")
+    parser.add_argument("--conflicts", action=UniqueStore , help="Detect conflicts")
 
+    try:
+        args = parser.parse_args()
+    except:
+        sys.exit(1)
+    #### servise of file #####
     input_string = read_input_file(args.input)
     output_file = open_file_to_write(args.output)
 
