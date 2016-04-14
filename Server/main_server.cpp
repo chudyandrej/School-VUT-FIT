@@ -60,6 +60,8 @@ int main (int argc, const char * argv[]) {
     }
 
     while(1) {
+
+
         int comm_socket = accept(welcome_socket, (struct sockaddr *) &sa_client, &sa_client_len);
         if (comm_socket <= 0) {
             continue;

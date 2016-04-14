@@ -10,6 +10,7 @@
 #include <zconf.h>
 #include <sys/socket.h>
 #include <string>
+#include <fstream>
 #include <cstdlib>
 #include <stdio.h>
 #include <iostream>
@@ -23,7 +24,11 @@ private:
     bool connection_end ;
     int communication_socket;
     std::thread thread_;
-    int receiveReq(int socket, char *buffer);
+    void receiveReq(int socket);
+    std::vector<std::string> split_MSG(std::string input,  char delimiter );
+    int download(int socket_desc, std::string filename, std::string  fileSize );
+    void upload(int comm_socket, std::string filename);
+    std::ifstream::pos_type filesize(const char* filename);
 
 
 public:
@@ -36,6 +41,7 @@ public:
     }
     //destructor
     virtual ~Client() {
+        close(communication_socket);
         if (thread_.joinable()) thread_.join();
     }
 
