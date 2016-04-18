@@ -1,22 +1,44 @@
 #include <iostream>
 #include <getopt.h>
 #include <sys/socket.h>
-#include <netdb.h>
-#include <sstream>
 #include <vector>
+#include <string.h>
+#include <netinet/in.h>
 #include <fstream>
+#include <arpa/inet.h> //inet_addr
+#include <fcntl.h>
+#include <unistd.h>
+#include <sstream>
+#include <netdb.h> //gethostbyname
+#include <iostream>
+#include <set>
+#include <tuple>
+#include <stdlib.h>  
+
 
 #define BUFFER_SIZE 1024
 
+#define FATAL_ERROR 9
+#define FAIL_CONNECTION 2
+#define FAIL_FILE 3
+#define FAIL_TRANS 5
+#define FAIL 1
+#define SUCCS 0
+
 using namespace std;
 
+std::string number_to_string(long input);
+long string_to_number(std::string input);
 std::tuple<int, string, string,string> arguments_process(int argc, char *argv[]);
 int create_connection(string host_srver, int port);
 int sendRequest(int socket, string request);
 void make_request_to_server(int socket, string download_path, string upload_path);
 std::vector<std::string> respond(int socket);
-int download(int socket_desc, std::string filename);
-long fileSizeFunc(std::string filename);
+int download(int socket, std::string fileName);
+int upload(int socket, std::string fileName);
+long fileSizeFunc(std::string fileName);
+void chack_respond_status(std::string respond_status);
+std::string replace_string(std::string input, std::string wanted, std::string for_what);
 
 
 int main(int argc, char *argv[]) {
@@ -25,13 +47,20 @@ int main(int argc, char *argv[]) {
     string host, download_path,upload_path;
     std::tie(port, host, download_path, upload_path) = arguments_process(argc, argv);
     socket = create_connection(host, port);
-   // sendRequest(socket, string("seifaekughkseighkweugh"));
-    make_request_to_server(socket,download_path, upload_path);
-
-
+  
+    if (!download_path.empty()){
+        return download(socket , download_path);
+    }
+    else if (!upload_path.empty()) {
+        return upload(socket, upload_path);
+    }
+    else {
+        perror( "Fatal ERROR\n" );
+        return FATAL_ERROR;
+    }
     close(socket);
 
-    return EXIT_SUCCESS;
+    return SUCCS;
 }
 
 std::tuple<int, string, string,string> arguments_process(int argc, char *argv[]) {
@@ -43,11 +72,11 @@ std::tuple<int, string, string,string> arguments_process(int argc, char *argv[])
         switch (argFleg) {
             case 'p':
                 try {
-                    port = stoi(optarg);
+                     std::istringstream (optarg) >>  port ;               
                 }
                 catch(...) {
                     cerr << "Port must be number" << endl;
-                    return EXIT_FAILURE;
+                    exit(FAIL);
                 }
                 break;
             case 'h':
@@ -67,65 +96,132 @@ std::tuple<int, string, string,string> arguments_process(int argc, char *argv[])
         cerr << "Invalid combination of arguments" << endl;
         exit(6);
     }
-    return std::make_tuple(port,host, download_path, upload_path);
+    return std::make_tuple(port,host, download_path, upload_path);  //ok
 }
-
 
 int create_connection(string host_server, int port){
-  
-    int client_socket = 0;
-    struct sockaddr_in server_address;
-    struct hostent *host;
-    std::string copy_url = host_server;
-    if ((host= gethostbyname(copy_url.c_str())) == NULL){
-        fprintf(stderr, "Error: Bed format of URL!\n");
-        exit(EXIT_FAILURE);
-    }
+   
+    struct sockaddr_in addr;
+    struct hostent *server = NULL;
 
-    if ((client_socket = socket(AF_INET, SOCK_STREAM, 0)) <= 0) {
+    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_socket <= 0){
         fprintf(stderr, "Error: Unsucessful creat socet\n");
-        exit(EXIT_FAILURE);
+        exit(FAIL_CONNECTION);
     }
-    server_address.sin_family = AF_INET;
-    server_address.sin_port = htons(port);
-    server_address.sin_addr = *((struct in_addr *)host->h_addr);
-    memset(server_address.sin_zero, '\0', sizeof server_address.sin_zero);
 
-    if (connect(client_socket, (const struct sockaddr *) &server_address, sizeof(server_address)) != 0) {
-        fprintf(stderr, "Error: Unsucessful connection to server\n");
-        exit(EXIT_FAILURE);
+    //domain name to ip address
+    server = gethostbyname(host_server.c_str());
+    if (server == NULL){
+        exit (FAIL_CONNECTION);
     }
-    return client_socket;
+    //fill structure for connect()
+    memset(&addr,0,sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    memcpy(&addr.sin_addr.s_addr, server->h_addr_list[0], (size_t)server->h_length);
+    //Create connection
+    if((connect( client_socket, (struct sockaddr*) &addr, sizeof(addr) )) < 0){
+        cerr << "Unable to connect" << endl;
+        exit (FAIL_CONNECTION);
+    }
+    return client_socket;    //ok
+}
+   
+int download(int socket, std::string fileName) {
+   
+    char buffer[BUFFER_SIZE];
+    long sizeFILE;
+    std::vector<std::string> respond_vector;
+    
+    if (sendRequest(socket, "D," + fileName) == FAIL_TRANS){return FAIL_TRANS;}     // send reques to server: "D,fileName\n\n"
+    respond_vector = respond(socket);                                   // wait antil server send respond
+    chack_respond_status(respond_vector[0]);                            // chack if server respod was "ok"
+
+    sizeFILE = string_to_number(respond_vector[1]);                     //in respond is on second position file size
+   
+    std::ofstream file;     
+    file.open(fileName, std::ios::binary);                              //open file to write
+    if( !file.is_open() ){
+        perror("Unable to create a file\n");
+        return (FAIL_FILE);
+    }
+    printf( "fileName: %s Length:%ld\n" ,fileName.c_str(),sizeFILE );     //debug
+
+    int bytes = 0;
+    int received = 0;
+    while(bytes != sizeFILE) {                              //start downloading data
+        memset(buffer, 0, sizeof(buffer));
+        received = (int) recv(socket, buffer, BUFFER_SIZE, 0);          
+      
+        if (received <= 0) {
+            break;
+        }
+        file.write(buffer, received);
+        bytes += received;
+    }
+   
+    file.close();
+    if(bytes != sizeFILE){
+        perror("Error some data was losed");
+        return FAIL_TRANS;
+    }
+    else{
+        printf("SUCESS !!!!!!!!\n");
+        return SUCCS;
+    } //ok
 }
 
-void make_request_to_server(int socket, string download_path, string upload_path) {
+int upload(int socket, std::string fileName){
+
+    long sizeFILE;
+    char buffer[BUFFER_SIZE];
+    std::vector<std::string> respond_vector;
+    std::ofstream file; 
     std::string request;
-    char server_mesg[5];
-    if (!download_path.empty()) {
-        request = "D," + download_path + "\n\n";
-        printf ("%s",request.c_str());
-        sendRequest(socket, request);
-        download(socket , download_path);
 
+    sizeFILE = fileSizeFunc(fileName);
+    if (sizeFILE == -1){
+        perror("File not found\n");
+        exit(FAIL_FILE);
     }
-    else if (!upload_path.empty()) {
-        request = "U," + upload_path + "\n\n";
-        sendRequest(socket, request);
+   
+    if (sendRequest(socket, "U," +fileName+","+ number_to_string(sizeFILE)) == FAIL_TRANS){return FAIL_TRANS;}    //send reqest "U,fileName,size\n\n"
+    respond_vector = respond(socket);                               
+    chack_respond_status(respond_vector[0]);                    //chcek respond
+    
+    memset(buffer, 0, sizeof(buffer));
+    int upload_file = open(fileName.c_str(), O_RDONLY);
+    printf("fileName: %s , Length: %ld \n",fileName.c_str(),sizeFILE);
+    ssize_t bytes_read = 0;
+    ssize_t bytes_written = 0; 
+    while (1) {
+        memset(buffer, 0, sizeof(buffer));
+        bytes_read = read(upload_file, buffer, sizeof(buffer));
+        if (bytes_read == 0) { break; } //whole file is read
+        if (bytes_read < 0) {
+            perror("Reading from file FAILED\n");
+            return FAIL_FILE;
+        }
+        char *buffPtr = buffer;
+        while (bytes_read > 0) {
+            bytes_written = write(socket, buffPtr, (size_t) bytes_read);
+            if (bytes_written <= 0) {
+                printf("Sending bytes FAILED");
+                return FAIL_TRANS;
+            }
+            bytes_read -= bytes_written;
+            buffPtr += bytes_written;
+        }
     }
-    else {
-        cerr << "Fatal ERROR" << endl;
-        exit(6);
-    }
-
-   recv(socket, server_mesg, sizeof(server_mesg), 0);
-   printf("%s", server_mesg);
-
+    printf("SUCCESS !!!!!!!\n");
+    file.close(); //check if successful?
+    return SUCCS; //ok
 }
-
 
 int sendRequest(int socket, string request) {
-
-    unsigned long requestLen = request.length()+1;
+    request = request + "\n\n";
+    unsigned long requestLen = request.length() + 1;
     const char *c;
 
     c = request.c_str();
@@ -134,8 +230,8 @@ int sendRequest(int socket, string request) {
     while (sent < (int)requestLen){
         bytes = (int) send(socket, c+sent, (size_t) requestLen, 0);
         if (bytes < 0) {
-            cerr << "Sending request FAILED" << endl;
-            return EXIT_FAILURE;
+            perror("Sending request FAILED");
+            return FAIL_TRANS;
         }
         if (bytes == 0) {
             break;
@@ -143,10 +239,10 @@ int sendRequest(int socket, string request) {
         sent += bytes;
     }
     if(sent != (int)requestLen){
-        cerr << "ERROR: NOT entire request sent" << endl;
-        return EXIT_FAILURE;
+        perror("ERROR: NOT entire request sent");
+        return FAIL_TRANS;
     }
-    return EXIT_SUCCESS;
+    return SUCCS;
 }
 
 std::vector<std::string> split(std::string input, char delimiter) {
@@ -160,112 +256,34 @@ std::vector<std::string> split(std::string input, char delimiter) {
     return seglist;
 }
 
-
-
-
-int download(int socket_desc, std::string filename) {
-    char buffer[BUFFER_SIZE];
-    long sizeFILE;
-    std::vector<std::string> respond_summary;
-    printf("cakam\n");
-    respond_summary = respond(socket_desc);
-    printf("pokracujem\n");
-    if(respond_summary[0].compare("CLS") && respond_summary.size() != 2){
-        perror("Bed syntax of request, server don't understood");
-        exit(11);
-    }
-    else if(respond_summary[0].compare("NF") && respond_summary.size() != 2){
-        perror("No such file or directory on server");
-        exit(12);
-    }
-    else if(respond_summary[0].compare("EMP")){
-        perror("Something is wrong sanded request was empty");
-        exit(13);
-    }
-
+long string_to_number(std::string input){
+    long output;
     try {
-        sizeFILE = stoi(respond_summary[1]);
+        std::istringstream (input) >>  output; 
     }
     catch(...) {
-        //cerr << "Port must be number" << endl;
-        return EXIT_FAILURE;
+        perror("Error during converting string to number");
+        exit(FAIL);
     }
-
-    //receive file itself
-    std::ofstream file; //has automatically ios::out flag
-    file.open(filename, std::ios::binary);
-    if( !file.is_open() ){
-        //cerr << "Unable to create a file" << endl;
-        return EXIT_FAILURE;
-    }
-    //cout << "Filename:" << filename << "\nLength:" << fileSize << endl;     //debug
-
-    int bytes = 0;
-    int received = 0;
-    while(bytes != sizeFILE) {
-        memset(buffer, 0, sizeof(buffer));
-        received = (int) recv(socket_desc, buffer, BUFFER_SIZE, 0);
-        //cout << "something receiving: " <<received << endl; //debug
-        if (received <= 0) {
-            break;
-        }
-        file.write(buffer, received);
-        bytes += received;
-    }
-
-    file.close(); //check if successful?
-    if(bytes != sizeFILE){
-        //cerr << "Downloading FAILED, NOT entire file was downloaded" << endl;
-        return EXIT_FAILURE;
-    }
-    else{
-        //cout << "Downloading completed successfully" << endl;
-        return EXIT_SUCCESS;
-    }
+    return output;
 }
 
-void upload(int socket, std::string filename){
-
-    int bytes = 0;
-    int received;
-    long sizeFILE;
-    char buffer[BUFFER_SIZE];
-    long dataLength;
-    size_t index;
-    size_t end;
-    std::ofstream file; //has automatically ios::out flag
-    std::string request;
-
-    sizeFILE =  fileSizeFunc(filename);
-    request = "OK," + sizeFILE;
-    send(socket, request.c_str(), sizeof(request), 0);
-
-    memset(buffer, 0, sizeof(buffer));
-    file.open(filename, std::ios::binary);
-    //cout << "Filename:" << filename << "\nLength:" << dataLength << endl; //debug
-
-    while(bytes != dataLength) {
-        received = (int) recv(socket, buffer, sizeof(buffer), 0);
-        //cout << "something receiving: " <<received << endl; //debug
-        if (received <= 0) {
-            break;
-        }
-        file << buffer;
-        memset(buffer, 0, sizeof(buffer));
-        bytes += received;
+std::string number_to_string(long input){
+    std::ostringstream stream_to_str;
+    try {
+        stream_to_str << input; 
     }
-
-    file.close(); //check if successful?
-    /*if(bytes == dataLength){ sendResponse(comm_socket, ACK, ""); }
-    else{ sendResponse(comm_socket, NACK, ""); } //delete created file??*/
-
+    catch(...) {
+        perror("Error during converting number to string");
+        exit(FAIL);
+    }
+    return stream_to_str.str();
 }
 
-
-long fileSizeFunc(std::string filename) {
+long fileSizeFunc(std::string fileName) {
 
     std::ifstream file;
-    file.open(filename, std::ios::binary);
+    file.open(fileName, std::ios::binary);
     if(!file){
         return -1; //but file should exists, it's checked in other context
     }
@@ -274,16 +292,56 @@ long fileSizeFunc(std::string filename) {
     file.close();
     return fileSize;
 }
+
 std::vector<std::string> respond(int socket){
+
+
     char buffer[BUFFER_SIZE];
     memset(buffer, 0, BUFFER_SIZE);
     std::string massage;
+    int received = 0;
+   
+    while(true){
+        received = recv(socket, buffer, (size_t)(BUFFER_SIZE), 0);
+        massage = massage + string(buffer);
+        if (received <= 0) {
+            break;
+        }
 
-    while(recv(socket, buffer, (size_t)(BUFFER_SIZE), 0) > 0){
-        massage.append(buffer);
         if(massage.find("\n\n") != std::string::npos){
+            massage = replace_string(massage,"\n\n","");
             break;
         }
     }
     return split(massage,',');
 }
+
+void chack_respond_status(std::string respond_status){
+    if(respond_status == "CLS" ){
+        perror("Bed syntax of request, server don't understood");
+        exit(11);
+    }
+    else if(respond_status == "NF"){
+        perror("No such file or directory on server");
+        exit(12);
+    }
+    else if(respond_status == "EMP"){
+        perror("Something is wrong sanded request was empty");
+        exit(13);
+    }
+    else if (respond_status != "OK"){
+        perror("Something is wrong");
+        exit(13);
+    }
+}
+
+std::string replace_string(std::string input, std::string wanted, std::string for_what){
+    size_t f = input.find(wanted);
+    input.replace(f, std::string(wanted).length(), for_what);
+    return input;
+}
+
+
+
+
+
