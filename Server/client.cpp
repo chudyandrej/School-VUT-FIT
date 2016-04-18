@@ -2,62 +2,163 @@
 // Created by Andrej Oliver Chudý on 13/04/16.
 //
 
-
-#include <vector>
-#include <sstream>
-#include <fstream>
-#include <sys/stat.h>
-
 #include "client.h"
-#define BUFFER_SIZE 1024
 
 
-void Client::comunication() {
 
-    receiveReq(communication_socket);
-    connection_end = true;
-
-}
-
-
-void Client::receiveReq(int socket) {
-    char buffer[BUFFER_SIZE];
-    std::vector<std::string> vector_massage;
-    memset(buffer, 0, BUFFER_SIZE);
-    std::string massage;
-
-    while(recv(socket, buffer, (size_t)(BUFFER_SIZE), 0) > 0){
-        massage.append(buffer);
-        if(massage.find("\n\n") != std::string::npos){
-            break;
+void Client::service_request(std::vector<std::string> request_MSG) {
+    if (request_MSG.size() > 0) {
+        if (request_MSG[0] == "D" && request_MSG.size() == 2) {
+            if (upload(communication_socket,request_MSG[1]) != SUCCS){
+                sendMassage(communication_socket,"ERROR");
+            }
         }
-    }
-    printf("%s\n",massage.c_str());
-    if (!massage.empty()) {
-        vector_massage = split_MSG(massage, ',');
-        printf("%s\n",vector_massage[0].c_str());
-        if (!vector_massage[0].compare("D")) {
-
-            printf("UPLOAD\n");
-            upload(socket,vector_massage[1]);
-        }
-        else if (!vector_massage[0].compare("U") ) {
-            printf("DOWNLAD\n");
-            //send(socket, "OK", sizeof("OK"), 0);
-            //download(socket, vector_massage[1], vector_massage[2]);
+        else if (request_MSG[0] == "U" && request_MSG.size() == 3 ) {
+            if (download(communication_socket, request_MSG[1], request_MSG[2]) != SUCCS) {
+                sendMassage(communication_socket,"ERROR");
+            }
         }
         else {
-            send(socket, "SYN", sizeof("OK"), 0);
+            sendMassage(communication_socket,"SYN");
         }
     }
     else{
-        send(socket, "EMP", sizeof("OK"), 0);
+       sendMassage(communication_socket,"EMP");
     }
 }
 
 
+int Client::download(int socket, std::string filename, std::string str_fileSIZE) {
+    char buffer[BUFFER_SIZE];
+    long fileSIZE;
+    std::vector<std::string> request_summary;
+    std::ofstream file;
 
-std::vector<std::string> Client::split_MSG(std::string input, char delimiter) {
+    sendMassage(socket, "OK");
+
+    fileSIZE = string_to_number(str_fileSIZE);
+    file.open(filename, std::ios::binary);
+
+    if( !file.is_open() ){
+        perror("Unable to create a file\n ");
+        return FAIL;
+    }
+
+    printf( "Filename: %s Length:%ld\n" ,filename.c_str(),fileSIZE );     //debug
+
+    int bytes = 0;
+    int received = 0;
+    while(bytes != fileSIZE) {
+        memset(buffer, 0, sizeof(buffer));
+        received = (int) recv(socket, buffer, BUFFER_SIZE, 0);
+        if (received <= 0) {
+            break;
+        }
+        file.write(buffer, received);
+        bytes += received;
+    }
+    file.close(); //check if successful?
+
+    if(bytes != fileSIZE){
+        perror("Error some data was losed");
+        return FAIL;
+    }
+    else{
+        return SUCCS;
+    }
+}
+
+int Client::upload(int socket, std::string filename){
+    long sizeFILE;
+    char buffer[BUFFER_SIZE];
+    std::string str_sizeFILE;
+    std::ofstream file; 
+    
+    sizeFILE = fileSizeFunc(filename);
+    if (sizeFILE == -1){
+        sendMassage(socket,"NF");
+        perror("File problem");
+        return FAIL;
+    }
+    sendMassage(socket,"OK," + number_to_string(sizeFILE));
+  
+    memset(buffer, 0, sizeof(buffer));
+    int upload_file = open(filename.c_str(), O_RDONLY);
+    int rc = flock(upload_file, LOCK_SH);
+    if (rc){
+        sendMassage(socket,"NF");
+        perror("File lock problem");
+        return FAIL;
+    }
+    printf("Filename: %s , Length: %ld \n",filename.c_str(),sizeFILE);
+    ssize_t bytes_read = 0;
+    ssize_t bytes_written = 0; 
+    while (1) {
+        memset(buffer, 0, sizeof(buffer));
+        bytes_read = read(upload_file, buffer, sizeof(buffer));
+        if (bytes_read == 0) { break; } //whole file is read
+        if (bytes_read < 0) {
+            perror("Reading from file FAILED\n");
+            return FAIL;
+        }
+
+        char *buffPtr = buffer;
+        while (bytes_read > 0) {
+            bytes_written = write(socket, buffPtr, (size_t) bytes_read);
+            if (bytes_written <= 0) {
+                perror("Sending bytes FAILED");
+                return FAIL;
+            }
+            bytes_read -= bytes_written;
+            buffPtr += bytes_written;
+        }
+    }
+
+    file.close(); //check if successful?
+    return SUCCS;
+}
+
+
+long Client::fileSizeFunc(std::string filename) {
+    std::ifstream file;
+    file.open(filename, std::ios::binary);
+    if(!file){
+        return -1; //but file should exists, it's checked in other context
+    }
+    file.seekg(0, std::ios::end);
+    std::streamoff fileSize = file.tellg();
+    file.close();
+    return fileSize;
+}
+
+
+int  Client::sendMassage(int socket, std::string request) {
+    request = request + "\n\n";
+    unsigned long requestLen = request.length() + 1;
+    const char *c;
+
+    c = request.c_str();
+    int sent = 0;
+    int bytes = 0;
+    while (sent < (int)requestLen){
+        bytes = (int) send(socket, c+sent, (size_t) requestLen, 0);
+        if (bytes < 0) {
+            perror("Sending request FAILED");
+            return FAIL;
+        }
+        if (bytes == 0) {
+            break;
+        }
+        sent += bytes;
+    }
+    if(sent != (int)requestLen){
+        perror("ERROR: NOT entire request sent");
+        return FAIL;
+    }
+    return SUCCS;
+}
+
+std::vector<std::string> Client::split(std::string input, char delimiter) {
     std::stringstream stream_massage(input);
     std::string segment;
     std::vector<std::string> seglist;
@@ -68,101 +169,55 @@ std::vector<std::string> Client::split_MSG(std::string input, char delimiter) {
     return seglist;
 }
 
+std::string Client::replace_string(std::string input, std::string wanted, std::string for_what){
+    size_t f = input.find(wanted);
+    input.replace(f, std::string(wanted).length(), for_what);
+    return input;
+}
 
+std::vector<std::string> Client::load_request(int socket){
 
-
-
-int Client::download(int socket_desc, std::string filename, std::string  str_fileSize) {
     char buffer[BUFFER_SIZE];
-    long sizeFILE;
+    memset(buffer, 0, BUFFER_SIZE);
+    std::string massage;
+    int received = 0;
+   
+    while(true){
+        received = recv(socket, buffer, (size_t)(BUFFER_SIZE), 0);
+        massage = massage + std::string(buffer);
+        if (received <= 0) {
+            break;
+        }
+
+        if(massage.find("\n\n") != std::string::npos){
+            massage = replace_string(massage,"\n\n","");
+            break;
+        }
+    }
+    return split(massage,',');
+}
+
+
+long Client::string_to_number(std::string input){
+    long output;
     try {
-        sizeFILE = stoi(str_fileSize);
+        std::istringstream (input) >>  output; 
     }
     catch(...) {
-        //cerr << "Port must be number" << endl;
-        return EXIT_FAILURE;
+        perror("Error during converting string to number");
+        exit(FAIL);
     }
-
-    //receive file itself
-    std::ofstream file; //has automatically ios::out flag
-    file.open(filename, std::ios::binary);
-    if( !file.is_open() ){
-        //cerr << "Unable to create a file" << endl;
-        return EXIT_FAILURE;
-    }
-    //cout << "Filename:" << filename << "\nLength:" << fileSize << endl;     //debug
-
-    int bytes = 0;
-    int received = 0;
-    while(bytes != sizeFILE) {
-        memset(buffer, 0, sizeof(buffer));
-        received = (int) recv(socket_desc, buffer, BUFFER_SIZE, 0);
-        //cout << "something receiving: " <<received << endl; //debug
-        if (received <= 0) {
-            break;
-        }
-        file.write(buffer, received);
-        bytes += received;
-    }
-
-    file.close(); //check if successful?
-    if(bytes != sizeFILE){
-        //cerr << "Downloading FAILED, NOT entire file was downloaded" << endl;
-        return EXIT_FAILURE;
-    }
-    else{
-        //cout << "Downloading completed successfully" << endl;
-        return EXIT_SUCCESS;
-    }
+    return output;
 }
 
-void Client::upload(int socket, std::string filename){
-
-    int bytes = 0;
-    int received;
-    long sizeFILE;
-    char buffer[BUFFER_SIZE];
-
-    std::ofstream file; //has automatically ios::out flag
-    std::string request;
-    printf("FileName:%s\n", filename.c_str());
-    sizeFILE =  filesize(filename.c_str());
-    if (sizeFILE == -1){
-        printf("File not found\n");
-        request = "NF," + std::to_string(sizeFILE);
-        send(socket, request.c_str(), sizeof(request), 0);
+std::string Client::number_to_string(long input){
+    std::ostringstream stream_to_str;
+    try {
+        stream_to_str << input; 
     }
-    std::cout<< sizeFILE<<"\n";
-    request = "OK," + std::to_string(sizeFILE);
-    printf("req : %s\n",request.c_str() );
-    send(socket, request.c_str(), sizeof(request), 0);
-
-    memset(buffer, 0, sizeof(buffer));
-
-    file.open(filename, std::ios::binary);
-    //cout << "Filename:" << filename << "\nLength:" << dataLength << endl; //debug
-
-    while(bytes != sizeFILE) {
-        received = (int) recv(socket, buffer, sizeof(buffer), 0);
-        //cout << "something receiving: " <<received << endl; //debug
-        if (received <= 0) {
-            break;
-        }
-        file << buffer;
-        memset(buffer, 0, sizeof(buffer));
-        bytes += received;
+    catch(...) {
+        perror("Error during converting number to string");
+        exit(FAIL);
     }
-
-    file.close(); //check if successful?
-    //if(bytes == dataLength){ sendResponse(comm_socket, ACK, ""); }
- //   else{ sendResponse(comm_socket, NACK, ""); } //delete created file??
-
-}
-
-
-
-std::ifstream::pos_type Client::filesize(const char* filename)
-{
-    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
-    return in.tellg();
+    return stream_to_str.str();
 }
