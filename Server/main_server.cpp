@@ -2,18 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <sys/socket.h>
-
-#include <netinet/in.h>
 #include <vector>
 #include <iostream>
-#include <arpa/inet.h>
+#include <getopt.h>
+#include <arpa/inet.h> //inet_addr
 
 #include "client.h"
-
-#define WELCOME_MSG "Hi, type anything. To end type 'bye.' at a separate line.\n"
-
 
 bool is_number(const std::string& s);
 
@@ -30,8 +25,11 @@ int main (int argc, const char * argv[]) {
         return 1;
     }
     if (!std::string(argv[1]).compare(std::string("-p"))){
-        if (is_number(std::string(argv[2]))){
-            servet_port = std::stoi (std::string(argv[2]),&sz);
+        try {
+            std::istringstream (argv[2]) >> servet_port;   //check if port in range uns. short int?
+        } catch (...) {
+            printf("Bad argument");
+            exit (EXIT_FAILURE);
         }
     }
     else {
@@ -50,6 +48,9 @@ int main (int argc, const char * argv[]) {
     sa.sin6_family = AF_INET6;
     sa.sin6_addr = in6addr_any;
     sa.sin6_port = htons(servet_port);
+    int no = 0;
+    setsockopt(welcome_socket, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&no, sizeof(no));
+
     if ((bind(welcome_socket, (struct sockaddr*)&sa, sizeof(sa))) < 0) {
         perror("bind() failed");
         exit(EXIT_FAILURE);
@@ -60,10 +61,8 @@ int main (int argc, const char * argv[]) {
     }
 
     while(1) {
-
-
         int comm_socket = accept(welcome_socket, (struct sockaddr *) &sa_client, &sa_client_len);
-        if (comm_socket <= 0) {
+        if (comm_socket < 0) {
             continue;
         }
 
@@ -78,14 +77,8 @@ int main (int argc, const char * argv[]) {
                 connections.erase(connections.begin() + i);
             }
         }
-
         connections.push_back(new Client(comm_socket));
 
 
     }
-}
-
-bool is_number(const std::string& s)
-{
-    return !s.empty() && std::find_if(s.begin(),s.end(), [](char c) { return !std::isdigit(c); }) == s.end();
 }
