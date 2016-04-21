@@ -1,16 +1,9 @@
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <vector>
-#include <iostream>
-#include <getopt.h>
-#include <arpa/inet.h> //inet_addr
+#include <arpa/inet.h>  //inet_addr 
+#include <netinet/in.h> //FreeBSD  in6addr_any
 
-#include "client.h"
+#include "host.h"
 
-bool is_number(const std::string& s);
 
 int main (int argc, const char * argv[]) {
     int welcome_socket;

@@ -16,7 +16,7 @@
 #include <stdlib.h>  
 
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
 
 #define FATAL_ERROR 9
 #define FAIL_CONNECTION 2
@@ -27,18 +27,23 @@
 
 using namespace std;
 
-std::string number_to_string(long input);
-long string_to_number(std::string input);
-std::tuple<int, string, string,string> arguments_process(int argc, char *argv[]);
-int create_connection(string host_srver, int port);
+
 int sendRequest(int socket, string request);
-void make_request_to_server(int socket, string download_path, string upload_path);
-std::vector<std::string> respond(int socket);
+int create_connection(string host_srver, int port);
 int download(int socket, std::string fileName);
 int upload(int socket, std::string fileName);
+
+long string_to_number(std::string input);
 long fileSizeFunc(std::string fileName);
+
+void make_request_to_server(int socket, string download_path, string upload_path);
 void chack_respond_status(std::string respond_status);
+
 std::string replace_string(std::string input, std::string wanted, std::string for_what);
+std::vector<std::string> respond(int socket);
+std::string number_to_string(long input);
+
+std::tuple<int, string, string,string> arguments_process(int argc, char *argv[]);
 
 
 int main(int argc, char *argv[]) {
@@ -47,22 +52,31 @@ int main(int argc, char *argv[]) {
     string host, download_path,upload_path;
     std::tie(port, host, download_path, upload_path) = arguments_process(argc, argv);
     socket = create_connection(host, port);
-  
+    int exit_stat;
     if (!download_path.empty()){
-        return download(socket , download_path);
+        exit_stat = download(socket , download_path);
+        close(socket);
     }
     else if (!upload_path.empty()) {
-        return upload(socket, upload_path);
+        exit_stat = upload(socket, upload_path);
+         close(socket);
     }
     else {
         perror( "Fatal ERROR\n" );
-        return FATAL_ERROR;
+        exit_stat = FATAL_ERROR;
+         close(socket);
     }
-    close(socket);
+    return exit_stat;
 
-    return SUCCS;
 }
 
+/**
+ * This function processing arguments. 
+ * 
+ * @param argc - Count of arguments
+ * @param argv - Array of arguments
+ * @return Tuple arguments.
+ */
 std::tuple<int, string, string,string> arguments_process(int argc, char *argv[]) {
 
     int argFleg, port = 0;
@@ -99,6 +113,14 @@ std::tuple<int, string, string,string> arguments_process(int argc, char *argv[])
     return std::make_tuple(port,host, download_path, upload_path);  //ok
 }
 
+
+/**
+ * This function creating connection whit server. 
+ * 
+ * @param host_server - Address of server
+ * @param port - Communication port
+ * @return Socekt.
+ */
 int create_connection(string host_server, int port){
    
     struct sockaddr_in addr;
@@ -127,7 +149,15 @@ int create_connection(string host_server, int port){
     }
     return client_socket;    //ok
 }
-   
+ 
+/**
+ * This function downloading file from server (server uploading). 
+ * 
+ * @param socket - Communication socekt 
+ * @param filename - Name of downloaded file
+ * @return Exit status if operation end successfully
+ */
+
 int download(int socket, std::string fileName) {
    
     char buffer[BUFFER_SIZE];
@@ -146,7 +176,6 @@ int download(int socket, std::string fileName) {
         perror("Unable to create a file\n");
         return (FAIL_FILE);
     }
-    printf( "fileName: %s Length:%ld\n" ,fileName.c_str(),sizeFILE );     //debug
 
     int bytes = 0;
     int received = 0;
@@ -163,7 +192,8 @@ int download(int socket, std::string fileName) {
    
     file.close();
     if(bytes != sizeFILE){
-        perror("Error some data was losed");
+        perror("Error some data was lose\n");
+        remove( fileName.c_str() );
         return FAIL_TRANS;
     }
     else{
@@ -172,6 +202,14 @@ int download(int socket, std::string fileName) {
     } //ok
 }
 
+
+/**
+ * This function upload file to server (sever donwloading). 
+ * 
+ * @param socket - Communication socekt 
+ * @param filename - Name of file what client want
+ * @return Exit status if operation end successfully
+ */
 int upload(int socket, std::string fileName){
 
     long sizeFILE;
@@ -214,11 +252,21 @@ int upload(int socket, std::string fileName){
             buffPtr += bytes_written;
         }
     }
+    respond_vector = respond(socket);                               
+    chack_respond_status(respond_vector[0]);            //chcek if upload was successful
     printf("SUCCESS !!!!!!!\n");
-    file.close(); //check if successful?
+    file.close(); 
     return SUCCS; //ok
 }
 
+
+/**
+ * This function send request / message. 
+ * 
+ * @param socket - Communication socekt 
+ * @param request - Text of request / massage
+ * @return Exit status if operation end successfully
+ */
 int sendRequest(int socket, string request) {
     request = request + "\n\n";
     unsigned long requestLen = request.length() + 1;
@@ -245,6 +293,13 @@ int sendRequest(int socket, string request) {
     return SUCCS;
 }
 
+/**
+ * Function to split input string by some char
+ * 
+ * @param input - Input string
+ * @param delimiter - Char (delimiter)
+ * @return Vector of strings
+ */
 std::vector<std::string> split(std::string input, char delimiter) {
     std::stringstream stream_massage(input);
     std::string segment;
@@ -256,6 +311,12 @@ std::vector<std::string> split(std::string input, char delimiter) {
     return seglist;
 }
 
+/**
+ * Function to convert string to number (long)
+ * 
+ * @param input - Input string
+ * @return Long number
+ */
 long string_to_number(std::string input){
     long output;
     try {
@@ -268,6 +329,12 @@ long string_to_number(std::string input){
     return output;
 }
 
+/**
+ * Function to convert number to string 
+ * 
+ * @param input - Input number (long)
+ * @return Input number as string
+ */
 std::string number_to_string(long input){
     std::ostringstream stream_to_str;
     try {
@@ -280,6 +347,12 @@ std::string number_to_string(long input){
     return stream_to_str.str();
 }
 
+/**
+ * Function to chcek size of file 
+ * 
+ * @param filename - Path of file
+ * @return Size of file (byts)
+ */
 long fileSizeFunc(std::string fileName) {
 
     std::ifstream file;
@@ -293,9 +366,13 @@ long fileSizeFunc(std::string fileName) {
     return fileSize;
 }
 
+/**
+ * Function to load request from client
+ * 
+ * @param socket - Communication socekt
+ * @return Vector of message split over protocol delimiter
+ */
 std::vector<std::string> respond(int socket){
-
-
     char buffer[BUFFER_SIZE];
     memset(buffer, 0, BUFFER_SIZE);
     std::string massage;
@@ -313,9 +390,17 @@ std::vector<std::string> respond(int socket){
             break;
         }
     }
+    
     return split(massage,',');
 }
 
+/**
+ * Function chcek status of responze. If is "OK" program continue else program end whit warning
+ * 
+ * @param respond_status - Message from reyponze
+ * @param wanted - What you want replace
+ * @param for_what - For what you want replace it
+ */
 void chack_respond_status(std::string respond_status){
     if(respond_status == "CLS" ){
         perror("Bed syntax of request, server don't understood");
@@ -329,12 +414,24 @@ void chack_respond_status(std::string respond_status){
         perror("Something is wrong sanded request was empty");
         exit(13);
     }
+    else if(respond_status == "INC"){
+        perror("Upload was unsucessful, server don't have all data.");
+        exit(13);
+    }
     else if (respond_status != "OK"){
         perror("Something is wrong");
         exit(13);
     }
 }
 
+/**
+ * Function to replace string 
+ * 
+ * @param input - Input string
+ * @param wanted - What you want replace
+ * @param for_what - For what you want replace it
+ * @return Edit string
+ */
 std::string replace_string(std::string input, std::string wanted, std::string for_what){
     size_t f = input.find(wanted);
     input.replace(f, std::string(wanted).length(), for_what);

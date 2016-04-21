@@ -36,24 +36,30 @@ private:
     int communication_socket;
     std::thread thread_;
 
+
     void service_request(std::vector<std::string> request_MSG) ;
+    void upload(int socket, std::string filename);
+    void download(int socket_desc, std::string filename, std::string str_fileSIZE);
 
-    int download(int socket_desc, std::string filename, std::string str_fileSIZE);
-    int upload(int socket, std::string filename);
+    int sendMessage(int socket, std::string request) ;
+
     long fileSizeFunc(std::string filename);
-    int sendMassage(int socket, std::string request) ;
-    std::vector<std::string> load_request(int socket);
-    std::string replace_string(std::string input, std::string wanted, std::string for_what);
-    std::vector<std::string> split(std::string input, char delimiter);
     long string_to_number(std::string input);
-    std::string number_to_string(long input);
 
-   
+    std::string number_to_string(long input);
+    std::vector<std::string> load_request(int socket);
+    std::vector<std::string> split(std::string input, char delimiter);
+    std::string replace_string(std::string input, std::string wanted, std::string for_what);
+
+
+    
     void  comunication(){
-        
         service_request(  load_request(communication_socket)  );
         connection_end = true;
+        close(communication_socket);
     }
+
+
 
 public:
     //constructor
@@ -65,7 +71,6 @@ public:
     }
     //destructor
     virtual ~Client() {
-        close(communication_socket);
         if (thread_.joinable()) thread_.join();
     }
 
